@@ -3,9 +3,13 @@
   "displayName": "SFTP / FTP Uploader",
   "description": "在 VS Code 中通过 SFTP 或 FTP 上传文件、目录和整个工作区。",
   "version": "0.1.0",
-  "publisher": "bombingpig",
+  "publisher": "ruiange",
   "license": "MIT",
   "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ruiange/sftp.git"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -228,7 +232,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "node scripts/package-extension.cjs"
+    "package": "node scripts/package-extension.cjs",
+    "publish:marketplace": "vsce publish"
   },
   "dependencies": {
     "basic-ftp": "^5.0.5",
