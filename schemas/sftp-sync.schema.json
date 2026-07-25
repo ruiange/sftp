@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SFTP / FTP Uploader 配置",
+  "type": "object",
+  "required": [
+    "profiles"
+  ],
+  "properties": {
+    "defaultProfile": {
+      "type": "string",
+      "description": "默认使用的上传环境名称。"
+    },
+    "uploadOnSave": {
+      "type": "boolean",
+      "default": false,
+      "description": "所有环境默认是否在保存文件时自动上传。"
+    },
+    "ignore": {
+      "$ref": "#/definitions/ignorePatterns"
+    },
+    "profiles": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/profile"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ignorePatterns": {
+      "type": "array",
+      "description": "相对于工作区根目录的 glob 忽略规则。",
+      "items": {
+        "type": "string"
+      }
+    },
+    "profile": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "host",
+        "username",
+        "remotePath"
+      ],
+      "properties": {
+        "protocol": {
+          "type": "string",
+          "enum": [
+            "sftp",
+            "ftp"
+          ]
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "username": {
+          "type": "string"
+        },
+        "authType": {
+          "type": "string",
+          "enum": [
+            "password",
+            "privateKey"
+          ],
+          "description": "登录方式：密码或私钥。FTP 仅支持 password。"
+        },
+        "password": {
+          "type": "string",
+          "description": "登录密码，支持 ${env:VARIABLE_NAME}。"
+        },
+        "localPath": {
+          "type": "string",
+          "default": ".",
+          "description": "当前项目内需要上传的目录，相对于工作区根目录，例如 dist。"
+        },
+        "remotePath": {
+          "type": "string",
+          "description": "远端根目录，支持 ${workspaceFolderBasename}。"
+        },
+        "uploadOnSave": {
+          "type": "boolean"
+        },
+        "ignore": {
+          "$ref": "#/definitions/ignorePatterns"
+        },
+        "connectTimeout": {
+          "type": "integer",
+          "minimum": 1000,
+          "description": "连接超时时间，单位为毫秒。"
+        },
+        "privateKeyPath": {
+          "type": "string",
+          "description": "SFTP 私钥路径，支持 ~/ 和 ${env:VARIABLE_NAME}。"
+        },
+        "passphrase": {
+          "type": "string",
+          "description": "SFTP 私钥口令，支持 ${env:VARIABLE_NAME}。"
+        },
+        "secure": {
+          "description": "FTP 是否启用 TLS；implicit 表示隐式 FTPS。",
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "const": "implicit"
+            }
+          ]
+        },
+        "rejectUnauthorized": {
+          "type": "boolean",
+          "default": true,
+          "description": "FTPS 是否拒绝无法验证的 TLS 证书。"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

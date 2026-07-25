@@ -1,0 +1,245 @@
+{
+  "name": "sftp-ftp-uploader",
+  "displayName": "SFTP / FTP Uploader",
+  "description": "在 VS Code 中通过 SFTP 或 FTP 上传文件、目录和整个工作区。",
+  "version": "0.1.0",
+  "publisher": "bombingpig",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sftp",
+    "ftp",
+    "upload",
+    "deploy",
+    "sync"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:sftpFtpUploader.controlView",
+    "onView:sftpFtpUploader.remoteFilesView",
+    "onCommand:sftpFtpUploader.upload",
+    "onCommand:sftpFtpUploader.uploadCurrentFile",
+    "onCommand:sftpFtpUploader.uploadWorkspace",
+    "onCommand:sftpFtpUploader.initialize",
+    "onCommand:sftpFtpUploader.openConfig",
+    "onCommand:sftpFtpUploader.editConfigJson",
+    "onCommand:sftpFtpUploader.selectProfile",
+    "onCommand:sftpFtpUploader.testConnection",
+    "onCommand:sftpFtpUploader.showOutput",
+    "onCommand:sftpFtpUploader.refreshRemoteFiles",
+    "onCommand:sftpFtpUploader.deleteRemoteItem"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sftpFtpUploader.upload",
+        "title": "上传文件或目录",
+        "category": "SFTP / FTP"
+      },
+      {
+        "command": "sftpFtpUploader.uploadCurrentFile",
+        "title": "上传当前文件",
+        "category": "SFTP / FTP",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "sftpFtpUploader.uploadWorkspace",
+        "title": "上传整个工作区",
+        "category": "SFTP / FTP",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "sftpFtpUploader.initialize",
+        "title": "初始化配置",
+        "category": "SFTP / FTP"
+      },
+      {
+        "command": "sftpFtpUploader.openConfig",
+        "title": "打开配置页面",
+        "category": "SFTP / FTP",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "sftpFtpUploader.editConfigJson",
+        "title": "编辑原始 JSON 配置",
+        "category": "SFTP / FTP"
+      },
+      {
+        "command": "sftpFtpUploader.selectProfile",
+        "title": "切换上传环境",
+        "category": "SFTP / FTP",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "sftpFtpUploader.testConnection",
+        "title": "测试当前连接",
+        "category": "SFTP / FTP",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "sftpFtpUploader.showOutput",
+        "title": "显示上传日志",
+        "category": "SFTP / FTP",
+        "icon": "$(output)"
+      },
+      {
+        "command": "sftpFtpUploader.refreshRemoteFiles",
+        "title": "刷新远程目录",
+        "category": "SFTP / FTP",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "sftpFtpUploader.deleteRemoteItem",
+        "title": "删除远程文件或目录",
+        "category": "SFTP / FTP",
+        "icon": "$(trash)"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "sftpFtpUploader.explorer",
+        "label": "SFTP / FTP"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sftpFtpUploader",
+          "title": "SFTP / FTP",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "sftpFtpUploader": [
+        {
+          "id": "sftpFtpUploader.controlView",
+          "name": "传输控制"
+        },
+        {
+          "id": "sftpFtpUploader.remoteFilesView",
+          "name": "远程文件"
+        }
+      ]
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "submenu": "sftpFtpUploader.explorer",
+          "when": "resourceScheme == file",
+          "group": "7_modification@90"
+        }
+      ],
+      "sftpFtpUploader.explorer": [
+        {
+          "command": "sftpFtpUploader.upload",
+          "when": "resourceScheme == file",
+          "group": "1_upload@10"
+        },
+        {
+          "command": "sftpFtpUploader.uploadWorkspace",
+          "group": "1_upload@20"
+        },
+        {
+          "command": "sftpFtpUploader.selectProfile",
+          "group": "2_config@10"
+        },
+        {
+          "command": "sftpFtpUploader.testConnection",
+          "group": "2_config@20"
+        },
+        {
+          "command": "sftpFtpUploader.openConfig",
+          "group": "2_config@30"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "sftpFtpUploader.uploadCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "1_modification@90"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "sftpFtpUploader.openConfig",
+          "when": "view == sftpFtpUploader.controlView",
+          "group": "navigation@10"
+        },
+        {
+          "command": "sftpFtpUploader.uploadWorkspace",
+          "when": "view == sftpFtpUploader.controlView",
+          "group": "navigation@20"
+        },
+        {
+          "command": "sftpFtpUploader.refreshRemoteFiles",
+          "when": "view == sftpFtpUploader.remoteFilesView",
+          "group": "navigation@10"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "sftpFtpUploader.deleteRemoteItem",
+          "when": "view == sftpFtpUploader.remoteFilesView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-link)",
+          "group": "inline@10"
+        },
+        {
+          "command": "sftpFtpUploader.deleteRemoteItem",
+          "when": "view == sftpFtpUploader.remoteFilesView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-link)",
+          "group": "2_modification@10"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SFTP / FTP Uploader",
+      "properties": {
+        "sftpFtpUploader.configFile": {
+          "type": "string",
+          "default": ".vscode/sftp-sync.json",
+          "description": "相对于工作区根目录的连接配置文件路径。"
+        },
+        "sftpFtpUploader.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否在状态栏显示当前上传环境。"
+        },
+        "sftpFtpUploader.showSuccessNotification": {
+          "type": "boolean",
+          "default": true,
+          "description": "手动上传完成后是否显示成功通知。"
+        }
+      }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "/.vscode/sftp-sync.json",
+        "url": "./schemas/sftp-sync.schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "package": "node scripts/package-extension.cjs"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.5",
+    "minimatch": "^10.0.1",
+    "ssh2-sftp-client": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ssh2-sftp-client": "^9.0.5",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.7.2"
+  }
+}
