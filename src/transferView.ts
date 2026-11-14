@@ -1,125 +1,227 @@
+import { randomBytes } from 'node:crypto';
+import { basename, posix, relative, sep } from 'node:path';
 import * as vscode from 'vscode';
-import type { ConfigService } from './config';
+import {
+  defaultPort, isPathInsideRoot, normalizeLocalPath, normalizeRemoteRoot,
+  resolveLocalUploadRoot, resolveProfileValue, type ConfigService,
+} from './config';
+import type { UploadProfile } from './types';
 
-class TransferItem extends vscode.TreeItem {
+export type UploadFeedback = {
+  state: 'queued' | 'running' | 'done' | 'error' | 'cancelled';
+  message: string;
+};
+
+type TransferTarget = {
+  folder?: vscode.WorkspaceFolder;
+  file?: vscode.Uri;
+  profile?: string;
+  workspaceUploadBlockedReason?: string;
+};
+
+export class TransferViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+  private view?: vscode.WebviewView;
+  private readonly subscriptions: vscode.Disposable[] = [];
+  private target?: TransferTarget;
+  private targetId = 0;
+  private revision = 0;
+  private appliedRevision = 0;
+  private upload?: UploadFeedback;
+  private switching = false;
+
   public constructor(
-    label: string,
-    options: {
-      description?: string;
-      icon?: string;
-      tooltip?: string;
-      command?: string;
-      children?: TransferItem[];
-    } = {},
-  ) {
-    super(
-      label,
-      options.children ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+    private readonly extensionUri: vscode.Uri,
+    private readonly config: ConfigService,
+    private readonly uploadResource: (resource: vscode.Uri, profile: string) => Promise<void>,
+  ) {}
+
+  public resolveWebviewView(view: vscode.WebviewView): void {
+    this.dispose();
+    this.view = view;
+    const media = vscode.Uri.joinPath(this.extensionUri, 'media');
+    view.webview.options = { enableScripts: true, localResourceRoots: [media] };
+    this.subscriptions.push(
+      view.webview.onDidReceiveMessage((message: unknown) => void this.handleMessage(view, message)),
+      view.onDidChangeVisibility(() => this.refresh()),
+      view.onDidDispose(() => this.dispose()),
     );
-    this.description = options.description;
-    this.tooltip = options.tooltip;
-    this.iconPath = options.icon ? new vscode.ThemeIcon(options.icon) : undefined;
-    this.command = options.command
-      ? { command: options.command, title: label }
-      : undefined;
-    this.children = options.children;
+    view.webview.html = this.getHtml(view.webview, media);
   }
-
-  public readonly children?: TransferItem[];
-}
-
-export class TransferViewProvider implements vscode.TreeDataProvider<TransferItem>, vscode.Disposable {
-  private readonly changeEmitter = new vscode.EventEmitter<TransferItem | undefined | void>();
-  public readonly onDidChangeTreeData = this.changeEmitter.event;
-
-  public constructor(private readonly configService: ConfigService) {}
 
   public refresh(): void {
-    this.changeEmitter.fire();
+    const view = this.view;
+    if (view?.visible) void this.postState(view);
   }
 
-  public getTreeItem(element: TransferItem): vscode.TreeItem {
-    return element;
-  }
-
-  public async getChildren(element?: TransferItem): Promise<TransferItem[]> {
-    if (element?.children) {
-      return element.children;
-    }
-    if (element) {
-      return [];
-    }
-
-    const folder = this.currentWorkspaceFolder();
-    if (!folder) {
-      return [
-        new TransferItem('尚未打开工作区', {
-          icon: 'warning',
-          tooltip: '打开一个文件夹后即可配置上传连接。',
-        }),
-      ];
-    }
-
-    const connectionItems: TransferItem[] = [];
-    try {
-      const config = await this.configService.readConfig(folder);
-      const activeName = this.configService.getActiveProfileName(folder, config);
-      const profile = config.profiles[activeName];
-      const port = profile.port ?? (profile.protocol === 'sftp' ? 22 : profile.secure === 'implicit' ? 990 : 21);
-      connectionItems.push(
-        new TransferItem(activeName, {
-          description: `${profile.protocol.toUpperCase()} · ${profile.host}:${port}`,
-          icon: 'server-environment',
-          tooltip: `当前环境：${activeName}\n路径映射：${profile.localPath ?? '.'} → ${profile.remotePath}\n点击切换环境`,
-          command: 'sftpFtpUploader.selectProfile',
-        }),
-        new TransferItem(profile.localPath ?? '.', {
-          description: '项目上传目录',
-          icon: 'folder',
-          tooltip: `工作区内：${profile.localPath ?? '.'}`,
-        }),
-        new TransferItem(profile.remotePath, {
-          description: '远程目录',
-          icon: 'remote-explorer',
-          tooltip: profile.remotePath,
-        }),
-      );
-    } catch {
-      connectionItems.push(
-        new TransferItem('尚未配置连接', {
-          description: '点击开始配置',
-          icon: 'warning',
-          command: 'sftpFtpUploader.openConfig',
-        }),
-      );
-    }
-
-    return [
-      new TransferItem('当前连接', { children: connectionItems }),
-      new TransferItem('快捷操作', {
-        children: [
-          action('打开配置页面', 'settings-gear', 'sftpFtpUploader.openConfig'),
-          action('上传当前文件', 'cloud-upload', 'sftpFtpUploader.uploadCurrentFile'),
-          action('上传整个工作区', 'folder-opened', 'sftpFtpUploader.uploadWorkspace'),
-          action('切换上传环境', 'arrow-swap', 'sftpFtpUploader.selectProfile'),
-          action('测试当前连接', 'plug', 'sftpFtpUploader.testConnection'),
-          action('显示上传日志', 'output', 'sftpFtpUploader.showOutput'),
-        ],
-      }),
-    ];
+  public setUpload(upload?: UploadFeedback): void {
+    this.upload = upload;
+    const view = this.view;
+    if (view?.visible) void view.webview.postMessage({ type: 'upload', upload, switching: this.switching });
   }
 
   public dispose(): void {
-    this.changeEmitter.dispose();
+    this.revision += 1;
+    this.view = undefined;
+    this.target = undefined;
+    for (const subscription of this.subscriptions.splice(0)) subscription.dispose();
   }
 
-  private currentWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
-    const activeUri = vscode.window.activeTextEditor?.document.uri;
-    return (activeUri ? vscode.workspace.getWorkspaceFolder(activeUri) : undefined)
-      ?? vscode.workspace.workspaceFolders?.[0];
+  private async handleMessage(view: vscode.WebviewView, message: unknown): Promise<void> {
+    if (this.view !== view || !message || typeof message !== 'object' || !('type' in message)) return;
+
+    switch (message.type) {
+      case 'ready':
+        await this.postState(view);
+        break;
+      case 'configure':
+        await vscode.commands.executeCommand('sftpFtpUploader.openConfig', this.target?.folder?.uri);
+        break;
+      case 'switch': {
+        if (this.switching || !this.target?.profile) return;
+        this.switching = true;
+        void view.webview.postMessage({ type: 'upload', upload: this.upload, switching: true });
+        try {
+          await vscode.commands.executeCommand('sftpFtpUploader.selectProfile', this.target.folder?.uri);
+        } finally {
+          this.switching = false;
+          this.refresh();
+        }
+        break;
+      }
+      case 'upload':
+      case 'uploadWorkspace': {
+        const target = this.target;
+        const uploading = this.upload?.state === 'queued' || this.upload?.state === 'running';
+        const activeFolder = this.config.getActiveWorkspaceFolder();
+        if (!('targetId' in message) || message.targetId !== this.targetId || this.appliedRevision !== this.revision
+          || uploading || this.switching || !target?.folder || !target.profile
+          || target.folder.uri.toString() !== activeFolder?.uri.toString()) {
+          await this.postState(view);
+          break;
+        }
+        const resource = message.type === 'uploadWorkspace'
+          ? (target.workspaceUploadBlockedReason ? undefined : target.folder.uri)
+          : (target.file?.toString() === vscode.window.activeTextEditor?.document.uri.toString() ? target.file : undefined);
+        if (!resource) {
+          await this.postState(view);
+          break;
+        }
+        await this.uploadResource(resource, target.profile);
+        break;
+      }
+      case 'logs':
+        await vscode.commands.executeCommand('sftpFtpUploader.showOutput');
+        break;
+    }
+  }
+
+  private async postState(view: vscode.WebviewView): Promise<void> {
+    const revision = ++this.revision;
+    const folder = this.config.getActiveWorkspaceFolder();
+    const document = vscode.window.activeTextEditor?.document;
+    const file = document?.uri.scheme === 'file' ? document.uri : undefined;
+    const config = folder ? await this.config.readConfig(folder).catch(() => undefined) : undefined;
+    if (this.view !== view || revision !== this.revision || !view.visible) return;
+
+    const profileName = folder && config && this.config.getActiveProfileName(folder, config);
+    const profile = profileName ? config?.profiles[profileName] : undefined;
+    const environment = folder && profileName && profile ? describeEnvironment(profileName, profile, folder.name) : undefined;
+    const uploadTarget = folder && profile ? describeUploadTarget(folder, profile, file) : undefined;
+    const workspaceUploadBlockedReason = uploadTarget?.workspaceReason;
+
+    const current = this.target;
+    const uploadFile = uploadTarget && !uploadTarget.reason ? file : undefined;
+    if (current?.folder?.uri.toString() !== folder?.uri.toString() || current?.file?.toString() !== uploadFile?.toString()
+      || current?.profile !== profileName || current?.workspaceUploadBlockedReason !== workspaceUploadBlockedReason) {
+      this.targetId += 1;
+    }
+    this.target = { folder, profile: profileName, file: uploadFile, workspaceUploadBlockedReason };
+    this.appliedRevision = revision;
+    void view.webview.postMessage({
+      type: 'state', targetId: this.targetId, environment, canConfigure: !!folder, switching: this.switching,
+      emptyText: folder ? '当前工作区尚未配置上传环境' : '请先打开工作区',
+      fileName: file ? basename(file.fsPath) : undefined,
+      remoteFilePath: uploadTarget?.remoteFilePath,
+      uploadBlockedReason: uploadTarget?.reason, workspaceUploadBlockedReason, upload: this.upload,
+    });
+  }
+
+  private getHtml(webview: vscode.Webview, media: vscode.Uri): string {
+    const nonce = randomBytes(16).toString('hex');
+    const resource = (name: string) => webview.asWebviewUri(vscode.Uri.joinPath(media, name));
+    return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource}; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+  <link rel="stylesheet" href="${resource('transfer.css')}">
+  <title>传输控制</title>
+</head>
+<body>
+  <main aria-label="传输控制">
+    <button id="environment" class="environment" type="button" hidden>
+      <span class="server-icon" aria-hidden="true"></span>
+      <span class="env-copy"><span id="name" class="env-name"></span><span id="endpoint" class="endpoint"></span></span>
+      <span id="protocol" class="protocol"></span><span class="chevron" aria-hidden="true"></span>
+    </button>
+    <section id="empty" class="empty">
+      <p id="empty-text" role="status">正在读取配置…</p>
+      <button id="configure" class="secondary" type="button" hidden>打开配置页面</button>
+    </section>
+    <section id="actions" class="actions" hidden>
+      <button id="upload-workspace" class="primary" type="button">上传整个映射工作区</button>
+      <button id="upload" class="secondary" type="button" aria-describedby="target">上传当前文件</button>
+      <p id="target" class="target"></p>
+    </section>
+    <section id="feedback" class="feedback" hidden>
+      <span class="indicator" aria-hidden="true"></span>
+      <p id="status" role="status"></p>
+      <button id="logs" class="text-button" type="button" hidden>查看日志</button>
+    </section>
+  </main>
+  <script nonce="${nonce}" src="${resource('transfer.js')}" defer></script>
+</body>
+</html>`;
   }
 }
 
-function action(label: string, icon: string, command: string): TransferItem {
-  return new TransferItem(label, { icon, command });
+function describeEnvironment(name: string, profile: UploadProfile, folderName: string) {
+  const protocol = profile.protocol === 'ftp' && profile.secure ? 'FTPS' : profile.protocol.toUpperCase();
+  try {
+    const host = resolveProfileValue(profile.host, folderName).trim();
+    const address = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+    const port = profile.port ?? defaultPort(profile.protocol, profile);
+    const local = normalizeLocalPath(profile.localPath ?? '.');
+    const remote = normalizeRemoteRoot(resolveProfileValue(profile.remotePath, folderName));
+    const endpoint = `${address}:${port}`;
+    return { name, protocol, endpoint, tooltip: `${name} · ${protocol}\n${endpoint}\n路径映射：${local} → ${remote}\n点击切换上传环境` };
+  } catch {
+    return { name, protocol, endpoint: '连接配置缺少环境变量', tooltip: '点击切换上传环境' };
+  }
+}
+
+function describeUploadTarget(folder: vscode.WorkspaceFolder, profile: UploadProfile, file: vscode.Uri | undefined): {
+  reason?: string;
+  workspaceReason?: string;
+  remoteFilePath?: string;
+} {
+  let root: string;
+  try {
+    root = resolveLocalUploadRoot(folder.uri.fsPath, profile.localPath ?? '.');
+  } catch {
+    const reason = '请检查项目上传目录配置';
+    return { reason, workspaceReason: reason };
+  }
+  if (!file) return { reason: '打开本地文件后即可上传' };
+  const fileFolder = vscode.workspace.getWorkspaceFolder(file);
+  if (fileFolder?.uri.toString() !== folder.uri.toString()) return { reason: '当前文件不在此工作区内' };
+  if (!isPathInsideRoot(root, file.fsPath)) return { reason: '当前文件不在项目上传目录内' };
+  try {
+    const remote = normalizeRemoteRoot(resolveProfileValue(profile.remotePath, folder.name));
+    const filePath = relative(root, file.fsPath).split(sep).join('/');
+    return { remoteFilePath: posix.join(remote, filePath) };
+  } catch {
+    return {};
+  }
 }

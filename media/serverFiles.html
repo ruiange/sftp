@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+    <link rel="stylesheet" href="{{styleUri}}">
+    <title>远程文件</title>
+  </head>
+  <body>
+    <main class="file-manager">
+      <header class="manager-header">
+        <div class="manager-heading">
+          <span class="manager-mark" aria-hidden="true">/</span>
+          <div>
+            <h1>远程文件</h1>
+            <p id="endpoint" class="endpoint">正在读取连接配置…</p>
+          </div>
+        </div>
+        <div class="connection-meta">
+          <span id="environment" class="environment" hidden></span>
+          <span id="connection-status" class="connection-status" role="status">未连接</span>
+          <button id="configure" class="button quiet" type="button">环境配置</button>
+        </div>
+      </header>
+
+      <section class="navigation" aria-label="远程目录">
+        <div class="scope-switch" role="group" aria-label="浏览范围">
+          <button class="button scope-option" data-scope="deployment" type="button" aria-pressed="true" disabled>部署目录</button>
+          <button class="button scope-option" data-scope="server" type="button" aria-pressed="false" disabled>服务器根目录</button>
+        </div>
+        <div class="path-row">
+          <button id="up" class="button icon-button" type="button" title="返回上一级" aria-label="返回上一级" disabled>↑</button>
+          <button id="refresh" class="button icon-button" type="button" title="刷新当前目录" aria-label="刷新当前目录" disabled>↻</button>
+          <form id="path-form" class="path-form">
+            <label for="path" class="path-label">路径</label>
+            <input id="path" name="path" type="text" value="/" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="远程路径" disabled>
+            <button id="go" class="button quiet" type="submit" disabled>前往</button>
+          </form>
+          <button id="connect" class="button secondary" type="button" disabled>连接并浏览</button>
+        </div>
+        <div class="operation-row">
+          <div class="operations">
+            <button id="upload" class="button primary" type="button" disabled><span aria-hidden="true">↑</span> 上传文件</button>
+            <button id="create-file" class="button secondary" type="button" disabled>新建文件</button>
+            <button id="create-directory" class="button secondary" type="button" disabled>新建目录</button>
+            <button id="preview" class="button secondary" type="button" disabled>预览</button>
+            <button id="replace" class="button secondary" type="button" disabled>上传替换</button>
+            <button id="rename" class="button secondary" type="button" disabled>重命名</button>
+            <button id="delete" class="button danger" type="button" disabled>删除</button>
+          </div>
+          <p id="selection" class="muted selection">未选择文件</p>
+        </div>
+      </section>
+
+      <div id="error-banner" class="error-banner" role="alert" hidden>
+        <p id="error-text"></p>
+        <button id="retry" class="button secondary" type="button">重试</button>
+      </div>
+
+      <div class="manager-workspace">
+        <section class="listing" aria-label="远程文件列表">
+          <div id="table-scroll" class="table-scroll" aria-busy="false">
+            <table id="files-table" aria-label="远程文件" aria-describedby="list-hint">
+              <thead>
+                <tr><th scope="col" class="name-column">名称</th><th scope="col" class="type-column">类型</th><th scope="col" class="size-column">大小</th><th scope="col" class="date-column">修改时间</th></tr>
+              </thead>
+              <tbody id="files"></tbody>
+            </table>
+            <div id="empty" class="empty-state">
+              <span id="empty-mark" class="empty-mark" aria-hidden="true">/</span>
+              <h2 id="empty-title">浏览远程文件</h2>
+              <p id="empty-message" class="muted">从当前环境的部署目录开始浏览。</p>
+              <button id="empty-connect" class="button primary" type="button" disabled>连接并浏览</button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="preview-pane" aria-labelledby="preview-title">
+          <div class="preview-heading">
+            <div class="preview-label"><h2 id="preview-title">文件预览</h2><span class="readonly">只读</span></div>
+            <button id="open" class="button quiet" type="button" disabled>在编辑器中编辑</button>
+          </div>
+          <p id="preview-path" class="preview-path" hidden></p>
+          <div id="preview-body" class="preview-body" tabindex="0" aria-label="预览内容">
+            <div id="preview-empty" class="preview-empty">
+              <span class="preview-symbol" aria-hidden="true">{ }</span>
+              <p id="preview-message" role="status">选择文件后点击「预览」</p>
+              <p class="muted">支持 2 MB 以内的普通文本文件</p>
+            </div>
+            <pre id="preview-content" hidden></pre>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="manager-footer">
+        <span id="file-count" role="status">尚未读取目录</span>
+        <span id="list-hint" class="muted">双击目录进入 · 双击文件预览 · 上传替换和删除需确认</span>
+        <nav id="pagination" class="pagination" aria-label="目录分页" hidden>
+          <button id="previous-page" class="button icon-button" type="button" aria-label="上一页" title="上一页">‹</button>
+          <span id="page-number" class="page-number">1 / 1</span>
+          <button id="next-page" class="button icon-button" type="button" aria-label="下一页" title="下一页">›</button>
+        </nav>
+      </footer>
+    </main>
+    <script nonce="{{nonce}}" src="{{scriptUri}}" defer></script>
+  </body>
+</html>

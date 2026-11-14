@@ -2,8 +2,10 @@
 .idea/**
 .github/**
 .vscode/**
+docs/images/**
 release/**
 scripts/**
+AGENTS.md
 .gitignore
 src/**
 tsconfig.json

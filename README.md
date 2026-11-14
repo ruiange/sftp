@@ -1,41 +1,72 @@
 # SFTP / FTP Uploader
 
-在 VS Code 中直接把工作区文件上传到 SFTP、FTP 或 FTPS 服务器。插件保留本地目录结构，适合网站发布、测试环境同步和轻量部署。
+在 VS Code 里上传工作区文件、管理服务器目录和打开 SSH 终端。支持 SFTP、FTP、显式 FTPS 和隐式 FTPS。可以为测试和生产分别保存连接，切换环境时直接使用对应的服务器和部署目录。
 
-## 功能
+## 安装与首次连接
 
-- 支持 SFTP、FTP、显式 FTPS 和隐式 FTPS。
-- 支持上传当前文件、资源管理器中的文件/目录、多选资源及整个工作区。
-- 支持多个上传环境并可从状态栏快速切换。
-- 提供可视化配置页面，可新增、删除、重命名环境并直接测试连接。
-- 在 VS Code 最左侧提供独立传输菜单，可查看当前环境并快速执行上传操作。
-- 支持保存文件时自动上传。
-- 登录方式简化为密码登录和 SFTP 密钥登录，密码支持环境变量。
-- 每个环境可配置项目上传目录和远程目录，并按两者的根路径进行映射。
-- 左侧“远程文件”视图可浏览当前环境的服务器目录，并支持删除远程文件或目录。
-- 提供连接测试、可取消的上传进度和独立输出日志。
+1. 在 VS Code 的「扩展」里搜索 **SFTP / FTP Uploader**，选择发布者为 `ruiange` 的扩展。已有安装包时，在命令面板运行「扩展：从 VSIX 安装」，选择 `.vsix` 文件。
+2. 打开要上传的本地项目文件夹。按 `F1` 打开命令面板，运行 `SFTP / FTP: 初始化配置`。
+3. 在配置页填写协议、服务器地址、端口和登录方式。切到「映射」填写本地路径和部署路径，再点击「保存配置」和「测试连接」。
+4. 从 VS Code 左侧打开 **SFTP / FTP**。在「传输控制」里确认当前环境，再选择要上传的范围。
 
-## 快速开始
+## 上传文件
 
-1. 打开命令面板，执行 `SFTP / FTP: 初始化配置`。
-2. 在自动打开的配置页面中填写服务器信息并保存，也可以点击“原始 JSON”直接编辑配置文件。
-3. 在配置页面测试连接成功后，在资源管理器中右键文件或目录，选择 `SFTP / FTP` → `上传文件或目录`。
+![传输控制面板，显示示例环境和两个上传按钮](https://raw.githubusercontent.com/ruiange/sftp/50a7962e64316ad3c0f02e814cdcb8eeacf51529/docs/images/transfer-control.png)
 
-`localPath` 是当前项目内的上传目录，`remotePath` 是对应的服务器目录。例如 `localPath` 为 `dist`、`remotePath` 为 `/var/www/site` 时，本地文件 `dist/assets/app.js` 会上传到 `/var/www/site/assets/app.js`。需要上传整个项目时，将 `localPath` 设置为 `.`。
+*截图使用示例连接。*
 
-## SFTP 登录方式
+- **上传整个映射工作区**会上传当前环境映射的本地目录。例如本地路径是 `dist`、部署路径是 `/var/www/site`，则 `dist/assets/app.js` 会上传到 `/var/www/site/assets/app.js`。需要从项目根目录上传时，把本地路径设为 `.`。
+- **上传当前文件**上传编辑器中打开的本地文件。也可在资源管理器中选中文件或目录，右键选择「SFTP / FTP → 上传文件或目录」。
+- **切换环境**时，点击「传输控制」上的环境卡片，或点击状态栏的环境名称。悬停在环境卡片上可以查看路径映射。
+- **保存时自动上传**可在配置页的「连接」里开启。部署前如需排除文件，可在「排除的路径」里填写规则。
 
-SFTP 提供两种明确的登录方式，在配置页面中二选一。
+手动上传可从进度通知取消。「传输控制」会显示排队、上传和结果。可从标题栏「⋯」打开连接测试或上传日志。
 
-### 密码登录
+## 管理远程文件
+
+点击左侧 **SFTP / FTP → 远程文件 → 打开远程文件管理器**。双击目录进入，双击文件预览。
+
+| 浏览范围 | 可以做什么 |
+| --- | --- |
+| 部署目录 | 从配置中的部署路径开始。可新建、重命名，以及在 VS Code 中编辑并保存普通文件。 |
+| 服务器根目录 | 从账号有权限访问的 `/` 开始，可以浏览部署目录之外的文件。在编辑器中打开文件时为只读。 |
+
+两个范围都可以上传、替换或删除文件。覆盖和删除前请核对确认框中的目标路径。删除目录会一并删除其中的内容，当前范围的根目录受保护。预览和编辑支持 2 MB 以内的普通文件。
+
+## SSH 终端与快捷命令
+
+1. 在左侧 **SFTP / FTP → SSH 终端** 点选一个 SFTP 环境。每个会话在编辑区独立打开。首次连接时，请核对服务器指纹后再确认。
+2. 点击该会话底栏的 **快捷命令**，展开终端下方的输入区。命令面板中的 `SFTP / FTP: SSH 快捷命令` 也能打开它。
+3. 打开「命令库」并点选一条，命令会填入输入框。可以直接编辑，或用「保存当前命令」存到该工作区。
+4. 等终端回到 Shell 提示符后，点击「执行」。也可以用 macOS 的 `⌘Enter` 或 Windows、Linux 的 `Ctrl+Enter` 发送。命令发往当前标签页的 SSH 会话。
+
+命令发送成功后，输入框自动清空，终端继续显示执行结果。发送失败时，输入内容会保留。
+
+![SSH 终端及底部的快捷命令输入区，已填入一条文件列表命令](https://raw.githubusercontent.com/ruiange/sftp/50a7962e64316ad3c0f02e814cdcb8eeacf51529/docs/images/ssh-quick-commands.png)
+
+*截图使用示例连接。*
+
+命令库内置 12 条 Linux 查看命令，包括 `ls -lah --color=auto`、`df -h`、`free -h`、`ip -br addr` 和系统日志查询。服务和日志命令适用于使用 systemd 的服务器。多行命令需要目标 Shell 启用括号粘贴模式。
+
+服务器列表显示 SSH 端口的 TCP 建连时间。终端保留远端的 ANSI 颜色，并为常见 Shell 提示符和日志级别加色。若习惯远端原有配色，可在设置中关闭 `sftpFtpUploader.colorizeSshLogs`。
+
+## 连接配置参考
+
+配置默认保存在工作区的 `.vscode/sftp-sync.json`，可在配置页点「原始 JSON」打开。新增、修改或删除环境后，点击「保存配置」生效。
+
+- **SFTP** 默认端口为 22。可选密码登录或私钥登录。只有私钥设置了口令时才需要填写口令。
+- **FTP / FTPS** 用密码登录。普通 FTP 和显式 FTPS 默认端口为 21，隐式 FTPS 默认端口为 990。FTPS 默认校验证书。
+- **排除规则**相对于本地映射目录。全局规则对所有环境生效，也可针对单个环境补充规则。可用 `!路径` 重新包含被前面规则排除的文件。默认会跳过版本控制目录、`node_modules` 和符号链接。
+
+下面是一个 SFTP 密码登录示例。请将地址、用户名和目录换成自己的配置。
 
 ```json
 {
-  "defaultProfile": "production",
+  "defaultProfile": "test",
   "profiles": {
-    "production": {
+    "test": {
       "protocol": "sftp",
-      "host": "server.example.com",
+      "host": "sftp.example.com",
       "port": 22,
       "username": "deploy",
       "authType": "password",
@@ -48,111 +79,4 @@ SFTP 提供两种明确的登录方式，在配置页面中二选一。
 }
 ```
 
-### 密钥登录
-
-```json
-{
-  "protocol": "sftp",
-  "host": "server.example.com",
-  "port": 22,
-  "username": "deploy",
-  "authType": "privateKey",
-  "privateKeyPath": "~/.ssh/id_rsa",
-  "passphrase": "${env:SFTP_KEY_PASSPHRASE}",
-  "localPath": "dist",
-  "remotePath": "/var/www/site"
-}
-```
-
-`passphrase` 只在私钥本身设置了口令时填写。
-
-## FTP / FTPS 配置
-
-```json
-{
-  "defaultProfile": "ftp-production",
-  "profiles": {
-    "ftp-production": {
-      "protocol": "ftp",
-      "host": "ftp.example.com",
-      "port": 21,
-      "username": "ftp-user",
-      "authType": "password",
-      "password": "${env:FTP_PASSWORD}",
-      "localPath": "dist",
-      "remotePath": "/public_html",
-      "secure": true,
-      "rejectUnauthorized": true,
-      "uploadOnSave": false
-    }
-  }
-}
-```
-
-`secure` 的取值：
-
-- `false`：普通 FTP。
-- `true`：显式 FTPS。
-- `"implicit"`：隐式 FTPS，通常使用 990 端口。
-
-## 多环境
-
-`profiles` 中可以配置任意数量的环境。执行 `SFTP / FTP: 切换上传环境`，或点击状态栏中的环境名称即可切换。当前选择会按工作区保存。
-
-```json
-{
-  "defaultProfile": "test",
-  "profiles": {
-    "test": {
-      "protocol": "sftp",
-      "host": "test.example.com",
-      "username": "deploy",
-      "authType": "password",
-      "password": "${env:TEST_SFTP_PASSWORD}",
-      "localPath": "dist",
-      "remotePath": "/var/www/test"
-    },
-    "production": {
-      "protocol": "sftp",
-      "host": "prod.example.com",
-      "username": "deploy",
-      "authType": "privateKey",
-      "privateKeyPath": "~/.ssh/prod_deploy",
-      "localPath": "dist",
-      "remotePath": "/var/www/production"
-    }
-  }
-}
-```
-
-## 忽略规则
-
-根级 `ignore` 对所有环境生效，环境内的 `ignore` 仅对当前环境生效，两者会合并。规则相对于 `localPath`，使用 glob 语法；以 `!` 开头的后置规则可以重新包含此前忽略的路径。
-
-插件默认忽略 Git、SVN、Mercurial 元数据、`node_modules`、系统缩略图和自身连接配置，并始终跳过符号链接。
-
-## 远程文件
-
-点击 VS Code 最左侧的 SFTP / FTP 图标，在“远程文件”视图中可以从当前环境的 `remotePath` 开始浏览服务器目录。文件夹按需展开，文件会显示大小和修改时间。
-
-鼠标悬停在远程文件或目录上时，可以点击删除按钮，也可以通过右键菜单选择“删除远程文件或目录”。删除文件前会弹出确认提示；删除目录时会明确提示该目录及其全部内容将被递归删除。配置的 `remotePath` 根目录本身不允许删除。
-
-## 命令
-
-- `SFTP / FTP: 上传文件或目录`
-- `SFTP / FTP: 上传当前文件`
-- `SFTP / FTP: 上传整个工作区`
-- `SFTP / FTP: 初始化配置`
-- `SFTP / FTP: 打开配置页面`
-- `SFTP / FTP: 编辑原始 JSON 配置`
-- `SFTP / FTP: 切换上传环境`
-- `SFTP / FTP: 测试当前连接`
-- `SFTP / FTP: 显示上传日志`
-- `SFTP / FTP: 刷新远程目录`
-- `SFTP / FTP: 删除远程文件或目录`
-
-打包产物统一生成在项目的 `release/` 目录中，文件名格式为 `sftp-ftp-uploader-版本号.vsix`。
-
-## 安全建议
-
-不要把真实密码或私钥提交到代码仓库。优先使用 `${env:变量名}` 引用系统环境变量，并确保 `.vscode/sftp-sync.json` 不会被提交。FTPS 默认校验证书；只应在完全了解风险时关闭 `rejectUnauthorized`。
+密码和私钥口令可以用 `${env:变量名}` 引用环境变量。避免将真实密码、私钥或含凭据的连接配置提交到仓库。

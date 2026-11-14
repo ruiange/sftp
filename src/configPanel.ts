@@ -10,12 +10,15 @@ interface WebviewMessage {
   type?: string;
   config?: unknown;
   profileName?: unknown;
+  revision?: unknown;
 }
 
 export class ConfigPanel implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private folder: vscode.WorkspaceFolder | undefined;
   private messageDisposable: vscode.Disposable | undefined;
+  private writeQueue = Promise.resolve();
+  private deletionRevision = 0;
 
   public constructor(
     private readonly extensionUri: vscode.Uri,
@@ -60,6 +63,24 @@ export class ConfigPanel implements vscode.Disposable {
     this.panel?.dispose();
   }
 
+  public async deleteSavedProfile(folderUri: vscode.Uri, profileName: string): Promise<void> {
+    const folder = vscode.workspace.getWorkspaceFolder(folderUri);
+    if (!folder || folder.uri.toString() !== folderUri.toString()) {
+      throw new Error('该服务器所属的工作区已关闭。');
+    }
+    if (!await this.confirmDelete(folder, profileName)) {
+      return;
+    }
+
+    await this.enqueueWrite(async () => {
+      await this.configService.deleteProfile(folder, profileName);
+      if (this.folder?.uri.toString() === folderUri.toString()) {
+        await this.post({ type: 'profileDeleted', profileName, revision: ++this.deletionRevision });
+      }
+      await this.onConfigSaved(folder);
+    });
+  }
+
   private async handleMessage(message: WebviewMessage): Promise<void> {
     if (!this.panel || !this.folder || typeof message.type !== 'string') {
       return;
@@ -72,7 +93,10 @@ export class ConfigPanel implements vscode.Disposable {
           await this.postState();
           break;
         case 'save':
-          await this.save(message.config, message.profileName);
+          await this.save(message);
+          break;
+        case 'confirmDelete':
+          await this.confirmDraftDeletion(message.profileName);
           break;
         case 'test':
           await this.test(message.config, message.profileName);
@@ -94,16 +118,47 @@ export class ConfigPanel implements vscode.Disposable {
     }
   }
 
-  private async save(configValue: unknown, profileNameValue: unknown): Promise<void> {
-    const config = configValue as ExtensionConfigFile;
-    const profileName = typeof profileNameValue === 'string' ? profileNameValue : '';
-    await this.configService.saveConfig(this.folder!, config);
-    if (profileName && config.profiles[profileName]) {
-      await this.configService.setActiveProfile(this.folder!, profileName);
+  private async save(message: WebviewMessage): Promise<void> {
+    const panel = this.panel;
+    const folder = this.folder!;
+    const config = message.config as ExtensionConfigFile;
+    const profileName = typeof message.profileName === 'string' ? message.profileName : '';
+    await this.enqueueWrite(async () => {
+      if (panel !== this.panel) return;
+      if (message.revision !== this.deletionRevision) {
+        throw new Error('服务器列表已更新，请再次保存配置。');
+      }
+      await this.configService.saveConfig(folder, config);
+      const activeProfile = Object.hasOwn(config.profiles, profileName) ? profileName : undefined;
+      await this.configService.setActiveProfile(folder, activeProfile);
+      await this.onConfigSaved(folder);
+      this.logger.info(`已从配置页面保存：${this.configService.getConfigUri(folder).fsPath}`);
+      if (panel === this.panel) {
+        await this.post({ type: 'saved', savedAt: new Date().toISOString(), profileName });
+      }
+    });
+  }
+
+  private async confirmDraftDeletion(profileName: unknown): Promise<void> {
+    const panel = this.panel;
+    if (typeof profileName === 'string' && profileName && await this.confirmDelete(this.folder!, profileName) && panel === this.panel) {
+      await this.post({ type: 'deleteConfirmed', profileName });
     }
-    await this.onConfigSaved(this.folder!);
-    this.logger.info(`已从配置页面保存：${this.configService.getConfigUri(this.folder!).fsPath}`);
-    await this.post({ type: 'saved', savedAt: new Date().toISOString(), profileName });
+  }
+
+  private async confirmDelete(folder: vscode.WorkspaceFolder, profileName: string): Promise<boolean> {
+    const choice = await vscode.window.showWarningMessage(
+      `删除工作区「${folder.name}」中的环境「${profileName}」？`,
+      { modal: true },
+      '删除环境',
+    );
+    return choice === '删除环境';
+  }
+
+  private enqueueWrite(operation: () => Promise<void>): Promise<void> {
+    const next = this.writeQueue.then(operation);
+    this.writeQueue = next.catch(() => undefined);
+    return next;
   }
 
   private async test(configValue: unknown, profileNameValue: unknown): Promise<void> {
@@ -167,16 +222,21 @@ export class ConfigPanel implements vscode.Disposable {
   }
 
   private async postState(): Promise<void> {
-    if (!this.folder) {
-      return;
-    }
-    const config = await this.configService.readConfig(this.folder, true);
-    await this.post({
-      type: 'state',
-      config,
-      activeProfile: this.configService.getActiveProfileName(this.folder, config),
-      workspaceName: this.folder.name,
-      configPath: this.configService.getConfigUri(this.folder).fsPath,
+    const folder = this.folder;
+    const panel = this.panel;
+    if (!folder) return;
+    await this.enqueueWrite(async () => {
+      if (panel !== this.panel) return;
+      const config = await this.configService.readConfig(folder, true);
+      if (panel !== this.panel) return;
+      await this.post({
+        type: 'state',
+        config,
+        activeProfile: this.configService.getActiveProfileName(folder, config),
+        workspaceName: folder.name,
+        configPath: this.configService.getConfigUri(folder).fsPath,
+        revision: this.deletionRevision,
+      });
     });
   }
 

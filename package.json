@@ -2,7 +2,7 @@
   "name": "sftp-ftp-uploader",
   "displayName": "SFTP / FTP Uploader",
   "description": "在 VS Code 中通过 SFTP 或 FTP 上传文件、目录和整个工作区。",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "ruiange",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -26,8 +26,11 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onStartupFinished",
+    "onFileSystem:sftp-ftp-remote",
+    "onFileSystem:sftp-ftp-server",
     "onView:sftpFtpUploader.controlView",
     "onView:sftpFtpUploader.remoteFilesView",
+    "onView:sftpFtpUploader.sshTerminalView",
     "onCommand:sftpFtpUploader.upload",
     "onCommand:sftpFtpUploader.uploadCurrentFile",
     "onCommand:sftpFtpUploader.uploadWorkspace",
@@ -36,9 +39,12 @@
     "onCommand:sftpFtpUploader.editConfigJson",
     "onCommand:sftpFtpUploader.selectProfile",
     "onCommand:sftpFtpUploader.testConnection",
+    "onCommand:sftpFtpUploader.openSshTerminal",
+    "onCommand:sftpFtpUploader.openSshQuickCommands",
+    "onCommand:sftpFtpUploader.refreshSshLatency",
     "onCommand:sftpFtpUploader.showOutput",
-    "onCommand:sftpFtpUploader.refreshRemoteFiles",
-    "onCommand:sftpFtpUploader.deleteRemoteItem"
+    "onCommand:sftpFtpUploader.openServerFiles",
+    "onCommand:sftpFtpUploader.refreshRemoteFiles"
   ],
   "contributes": {
     "commands": [
@@ -55,7 +61,7 @@
       },
       {
         "command": "sftpFtpUploader.uploadWorkspace",
-        "title": "上传整个工作区",
+        "title": "上传整个映射工作区",
         "category": "SFTP / FTP",
         "icon": "$(folder-opened)"
       },
@@ -88,22 +94,40 @@
         "icon": "$(plug)"
       },
       {
+        "command": "sftpFtpUploader.openSshTerminal",
+        "title": "打开 SSH 终端",
+        "category": "SFTP / FTP",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "sftpFtpUploader.openSshQuickCommands",
+        "title": "SSH 快捷命令",
+        "category": "SFTP / FTP",
+        "icon": "$(zap)"
+      },
+      {
+        "command": "sftpFtpUploader.refreshSshLatency",
+        "title": "刷新 SSH 延迟",
+        "category": "SFTP / FTP",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "sftpFtpUploader.showOutput",
         "title": "显示上传日志",
         "category": "SFTP / FTP",
         "icon": "$(output)"
       },
       {
+        "command": "sftpFtpUploader.openServerFiles",
+        "title": "打开远程文件管理器",
+        "category": "SFTP / FTP",
+        "icon": "$(folder-opened)"
+      },
+      {
         "command": "sftpFtpUploader.refreshRemoteFiles",
         "title": "刷新远程目录",
         "category": "SFTP / FTP",
         "icon": "$(refresh)"
-      },
-      {
-        "command": "sftpFtpUploader.deleteRemoteItem",
-        "title": "删除远程文件或目录",
-        "category": "SFTP / FTP",
-        "icon": "$(trash)"
       }
     ],
     "submenus": [
@@ -125,14 +149,26 @@
       "sftpFtpUploader": [
         {
           "id": "sftpFtpUploader.controlView",
-          "name": "传输控制"
+          "name": "传输控制",
+          "type": "webview"
         },
         {
           "id": "sftpFtpUploader.remoteFilesView",
           "name": "远程文件"
+        },
+        {
+          "id": "sftpFtpUploader.sshTerminalView",
+          "name": "SSH 终端",
+          "type": "webview"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "sftpFtpUploader.remoteFilesView",
+        "contents": "[打开远程文件管理器](command:sftpFtpUploader.openServerFiles)"
+      }
+    ],
     "menus": {
       "explorer/context": [
         {
@@ -178,26 +214,29 @@
           "group": "navigation@10"
         },
         {
-          "command": "sftpFtpUploader.uploadWorkspace",
+          "command": "sftpFtpUploader.testConnection",
           "when": "view == sftpFtpUploader.controlView",
-          "group": "navigation@20"
+          "group": "2_connection@10"
         },
         {
-          "command": "sftpFtpUploader.refreshRemoteFiles",
+          "command": "sftpFtpUploader.showOutput",
+          "when": "view == sftpFtpUploader.controlView",
+          "group": "2_connection@20"
+        },
+        {
+          "command": "sftpFtpUploader.openServerFiles",
           "when": "view == sftpFtpUploader.remoteFilesView",
           "group": "navigation@10"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "sftpFtpUploader.deleteRemoteItem",
-          "when": "view == sftpFtpUploader.remoteFilesView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-link)",
-          "group": "inline@10"
         },
         {
-          "command": "sftpFtpUploader.deleteRemoteItem",
-          "when": "view == sftpFtpUploader.remoteFilesView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-link)",
-          "group": "2_modification@10"
+          "command": "sftpFtpUploader.openSshTerminal",
+          "when": "view == sftpFtpUploader.sshTerminalView",
+          "group": "navigation@10"
+        },
+        {
+          "command": "sftpFtpUploader.refreshSshLatency",
+          "when": "view == sftpFtpUploader.sshTerminalView",
+          "group": "navigation@20"
         }
       ]
     },
@@ -218,6 +257,12 @@
           "type": "boolean",
           "default": true,
           "description": "手动上传完成后是否显示成功通知。"
+        },
+        "sftpFtpUploader.colorizeSshLogs": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "在新打开的 SSH 终端中高亮 Shell 提示符、日志级别和时间戳。"
         }
       }
     },
@@ -236,12 +281,16 @@
     "publish:marketplace": "vsce publish"
   },
   "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "basic-ftp": "^5.0.5",
     "minimatch": "^10.0.1",
+    "ssh2": "^1.17.0",
     "ssh2-sftp-client": "^12.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ssh2": "^1.15.5",
     "@types/ssh2-sftp-client": "^9.0.5",
     "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.2.1",

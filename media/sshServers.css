@@ -1,0 +1,275 @@
+:root {
+  color: var(--vscode-sideBar-foreground, var(--vscode-foreground));
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  font: var(--vscode-font-size, 13px) / 1.35 var(--vscode-font-family, sans-serif);
+  --server-mark: #67d9a4;
+  --status-connected: #36b669;
+  --status-failed: #f36a5a;
+  --status-pending: var(--vscode-descriptionForeground);
+}
+
+body.vscode-light {
+  --server-mark: #167749;
+  --status-connected: #168548;
+  --status-failed: #b93628;
+}
+
+body.vscode-high-contrast {
+  --server-mark: var(--vscode-testing-iconPassed, currentColor);
+  --status-connected: var(--vscode-testing-iconPassed, currentColor);
+  --status-failed: var(--vscode-errorForeground);
+}
+
+body, ul {
+  margin: 0;
+  padding: 0;
+}
+
+button {
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible, summary:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+#servers {
+  padding-block: 2px;
+  list-style: none;
+}
+
+.server-row {
+  position: relative;
+}
+
+.server-row:hover {
+  color: var(--vscode-list-hoverForeground, inherit);
+  background: var(--vscode-list-hoverBackground);
+}
+
+.server-row.selected {
+  color: var(--vscode-list-inactiveSelectionForeground, inherit);
+  background: var(--vscode-list-inactiveSelectionBackground, #2b2b2b);
+}
+
+.server-connect {
+  display: grid;
+  grid-template-columns: 13px minmax(0, 1fr) max-content;
+  align-items: center;
+  column-gap: 7px;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px 0 14px;
+  background: transparent;
+  text-align: left;
+}
+
+.selected .server-connect {
+  min-height: 54px;
+  padding-block: 8px;
+  row-gap: 3px;
+}
+
+.glyph {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.glyph::before {
+  width: 100%;
+  height: 100%;
+  background: currentColor;
+  mask: var(--glyph-image) center / contain no-repeat;
+  content: '';
+}
+
+.glyph-server {
+  --glyph-image: url('./ssh-icons/server.svg');
+  color: var(--server-mark);
+}
+
+.glyph-more {
+  --glyph-image: url('./ssh-icons/more.svg');
+}
+
+.server-name, .server-address, .server-workspace {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-self: end;
+  white-space: nowrap;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+  color: var(--vscode-descriptionForeground);
+  --dot: var(--status-pending);
+}
+
+.server-status[data-status="reachable"] {
+  --dot: var(--status-connected);
+}
+
+.server-status:is([data-status="timeout"], [data-status="unreachable"], [data-status="invalid"]) {
+  color: var(--status-failed);
+  --dot: var(--status-failed);
+}
+
+.server-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dot);
+}
+
+.server-meta {
+  display: flex;
+  grid-column: 2 / -1;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding-right: 23px;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+}
+
+.server-address {
+  flex-shrink: 1;
+}
+
+.server-protocol, .server-workspace {
+  border-left: 1px solid var(--vscode-panel-border, var(--vscode-descriptionForeground));
+  padding-left: 7px;
+}
+
+.server-address[hidden] + .server-protocol {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.server-protocol {
+  flex: none;
+}
+
+.server-workspace {
+  flex-shrink: 3;
+}
+
+.server-actions {
+  position: absolute;
+  inset: auto 3px 5px auto;
+}
+
+.server-actions[open] {
+  z-index: 1;
+}
+
+.server-row:not(.selected) .server-actions {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.server-row:not(.selected):is(:hover, :focus-within, :has(.server-actions[open])) .server-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.server-row:not(.selected):is(:hover, :focus-within, :has(.server-actions[open])) .server-connect {
+  padding-right: 28px;
+}
+
+.server-more {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.server-more::-webkit-details-marker {
+  display: none;
+}
+
+.server-more:hover, .server-actions[open] .server-more {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.server-menu {
+  position: absolute;
+  bottom: 22px;
+  right: 4px;
+  width: max-content;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+  border-radius: 4px;
+  background: var(--vscode-menu-background, var(--vscode-sideBar-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow, #0004);
+}
+
+.server-row:is(:first-child, :nth-child(2)) .server-menu {
+  bottom: auto;
+  top: 22px;
+}
+
+.menu-action {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  padding: 3px 9px;
+  border-radius: 2px;
+  background: transparent;
+  text-align: left;
+}
+
+.menu-action:hover, .menu-action:focus-visible {
+  color: var(--vscode-menu-selectionForeground, var(--vscode-foreground));
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+}
+
+.menu-action-danger {
+  color: var(--vscode-errorForeground, var(--status-failed));
+}
+
+.empty {
+  padding: 12px 14px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.empty p {
+  margin: 0 0 6px;
+}
+
+.empty button {
+  padding: 2px 0;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+}
+
+.empty button:hover {
+  text-decoration: underline;
+}

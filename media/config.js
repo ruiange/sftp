@@ -8,6 +8,7 @@
   let configPath = '';
   let dirty = false;
   let testing = false;
+  let revision = 0;
 
   window.addEventListener('message', (event) => {
     const message = event.data;
@@ -15,14 +16,24 @@
 
     if (message.type === 'state') {
       model = clone(message.config);
-      activeProfile = model.profiles[message.activeProfile]
+      activeProfile = Object.hasOwn(model.profiles, message.activeProfile)
         ? message.activeProfile
-        : Object.keys(model.profiles)[0];
+        : Object.keys(model.profiles)[0] ?? '';
+      revision = message.revision;
       workspaceName = message.workspaceName;
       configPath = message.configPath;
       dirty = false;
       testing = false;
       render();
+      return;
+    }
+    if (message.type === 'deleteConfirmed') {
+      removeProfile(message.profileName, true);
+      return;
+    }
+    if (message.type === 'profileDeleted') {
+      revision = message.revision;
+      removeProfile(message.profileName, false);
       return;
     }
     if (message.type === 'saved') {
@@ -78,7 +89,7 @@
   });
 
   function render() {
-    const profile = model.profiles[activeProfile];
+    const profile = Object.hasOwn(model.profiles, activeProfile) ? model.profiles[activeProfile] : undefined;
     const names = Object.keys(model.profiles);
     app.setAttribute('aria-busy', 'false');
     app.innerHTML = `
@@ -114,12 +125,13 @@
         </aside>
 
         <main class="content">
+          ${profile ? `
           <section class="profile-heading">
             <div>
               <label for="profile-name">当前环境</label>
               <input id="profile-name" class="profile-name-input" value="${escapeHtml(activeProfile)}" spellcheck="false">
             </div>
-            <button class="button button-danger-subtle" data-action="delete-profile" ${names.length === 1 ? 'disabled' : ''}>删除环境</button>
+            <button class="button button-danger-subtle" data-action="delete-profile">删除环境</button>
           </section>
 
           <nav class="config-tabs" aria-label="配置分类">
@@ -133,6 +145,7 @@
             ${activeTab === 'mapping' ? mappingTab(profile) : ''}
             ${activeTab === 'exclude' ? excludeTab(profile) : ''}
           </section>
+          ` : '<p>暂无连接环境，可通过左侧「新增环境」添加。</p>'}
         </main>
       </div>
       <div id="toast-region" class="toast-region" aria-live="polite"></div>
@@ -406,7 +419,7 @@
       input.addEventListener('input', () => updateGlobalField(input));
       input.addEventListener('change', () => updateGlobalField(input));
     });
-    document.getElementById('profile-name').addEventListener('change', renameActiveProfile);
+    document.getElementById('profile-name')?.addEventListener('change', renameActiveProfile);
     document.querySelectorAll('[data-action]').forEach((button) => {
       button.addEventListener('click', () => runAction(button.dataset.action, button));
     });
@@ -459,7 +472,7 @@
     if (action === 'pick-key') vscode.postMessage({ type: 'pickPrivateKey', profileName: activeProfile });
     if (action === 'pick-local') vscode.postMessage({ type: 'pickLocalPath', profileName: activeProfile });
     if (action === 'add-profile') addProfile();
-    if (action === 'delete-profile') deleteProfile();
+    if (action === 'delete-profile') vscode.postMessage({ type: 'confirmDelete', profileName: activeProfile });
     if (action === 'toggle-password') {
       const input = button.parentElement.querySelector('input');
       input.type = input.type === 'password' ? 'text' : 'password';
@@ -489,16 +502,20 @@
     requestAnimationFrame(() => document.getElementById('profile-name').select());
   }
 
-  function deleteProfile() {
-    if (Object.keys(model.profiles).length === 1) return;
-    if (!confirm(`确定删除环境“${activeProfile}”吗？`)) return;
+  function removeProfile(name, markUnsaved) {
+    if (!model || !Object.hasOwn(model.profiles, name)) return;
     const names = Object.keys(model.profiles);
-    const currentIndex = names.indexOf(activeProfile);
-    delete model.profiles[activeProfile];
+    const currentIndex = names.indexOf(name);
+    delete model.profiles[name];
     const remaining = Object.keys(model.profiles);
-    activeProfile = remaining[Math.min(currentIndex, remaining.length - 1)];
-    if (!model.profiles[model.defaultProfile]) model.defaultProfile = activeProfile;
-    markDirty();
+    if (name === activeProfile) {
+      activeProfile = remaining[Math.min(currentIndex, remaining.length - 1)] ?? '';
+    }
+    if (model.defaultProfile === name) {
+      if (remaining.length > 0) model.defaultProfile = remaining[0];
+      else delete model.defaultProfile;
+    }
+    if (markUnsaved) markDirty();
     render();
   }
 
@@ -508,7 +525,7 @@
       showToast(error, 'error');
       return;
     }
-    vscode.postMessage({ type: 'save', config: model, profileName: activeProfile });
+    vscode.postMessage({ type: 'save', config: model, profileName: activeProfile, revision });
   }
 
   function test() {
@@ -526,14 +543,14 @@
       const profile = model.profiles[name];
       if (!profile.host.trim()) return `环境“${name}”需要填写服务器地址`;
       if (!profile.username.trim()) return `环境“${name}”需要填写用户名`;
-      if (!String(profile.localPath || '').trim()) return `环境“${name}”需要填写本地路径`;
       if (!profile.remotePath.trim()) return `环境“${name}”需要填写部署路径`;
-      if (!Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) return `环境“${name}”的端口无效`;
+      const port = profile.port ?? defaultPort(profile);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return `环境“${name}”的端口无效`;
       const authType = profile.protocol === 'ftp'
         ? 'password'
         : profile.authType || (profile.privateKeyPath ? 'privateKey' : 'password');
-      if (authType === 'password' && !String(profile.password || '').trim()) return `环境“${name}”需要填写登录密码`;
-      if (authType === 'privateKey' && !String(profile.privateKeyPath || '').trim()) return `环境“${name}”需要选择私钥文件`;
+      if (onlyProfile && authType === 'password' && !String(profile.password || '').trim()) return `环境“${name}”需要填写登录密码`;
+      if (onlyProfile && authType === 'privateKey' && !String(profile.privateKeyPath || '').trim()) return `环境“${name}”需要选择私钥文件`;
       if (profile.connectTimeout !== undefined && profile.connectTimeout < 1000) return `环境“${name}”的连接超时不能小于 1000 毫秒`;
     }
     return '';

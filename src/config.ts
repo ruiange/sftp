@@ -45,7 +45,10 @@ const DEFAULT_CONFIG: ExtensionConfigFile = {
 };
 
 export class ConfigService {
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly resolveWorkspaceUri: (resource: vscode.Uri) => vscode.Uri = (resource) => resource,
+  ) {}
 
   public get configFileName(): string {
     return vscode.workspace
@@ -53,12 +56,15 @@ export class ConfigService {
       .get<string>('configFile', '.vscode/sftp-sync.json');
   }
 
+  public getActiveWorkspaceFolder(): vscode.WorkspaceFolder | undefined {
+    return this.findWorkspaceFolder(vscode.window.activeTextEditor?.document.uri)
+      ?? vscode.workspace.workspaceFolders?.[0];
+  }
+
   public async chooseWorkspaceFolder(resource?: vscode.Uri): Promise<vscode.WorkspaceFolder | undefined> {
-    if (resource) {
-      const matched = vscode.workspace.getWorkspaceFolder(resource);
-      if (matched) {
-        return matched;
-      }
+    const matched = this.findWorkspaceFolder(resource);
+    if (matched) {
+      return matched;
     }
 
     const folders = vscode.workspace.workspaceFolders ?? [];
@@ -76,6 +82,10 @@ export class ConfigService {
       { placeHolder: '选择要使用的工作区' },
     );
     return selected?.folder;
+  }
+
+  private findWorkspaceFolder(resource?: vscode.Uri): vscode.WorkspaceFolder | undefined {
+    return resource && vscode.workspace.getWorkspaceFolder(this.resolveWorkspaceUri(resource));
   }
 
   public getConfigUri(folder: vscode.WorkspaceFolder): vscode.Uri {
@@ -123,13 +133,33 @@ export class ConfigService {
 
   public async saveConfig(folder: vscode.WorkspaceFolder, config: ExtensionConfigFile): Promise<void> {
     const normalized = normalizeAuthenticationConfig(config);
-    validateConfigFile(normalized);
+    await this.writeConfig(folder, normalized);
+  }
+
+  public async deleteProfile(folder: vscode.WorkspaceFolder, name: string): Promise<void> {
+    const config = await this.readConfig(folder);
+    if (!Object.hasOwn(config.profiles, name)) {
+      return;
+    }
+
+    delete config.profiles[name];
+    if (config.defaultProfile === name) {
+      config.defaultProfile = Object.keys(config.profiles)[0];
+    }
+    await this.writeConfig(folder, config);
+    if (this.context.workspaceState.get<string>(this.activeProfileKey(folder)) === name) {
+      await this.setActiveProfile(folder, this.getActiveProfileName(folder, config));
+    }
+  }
+
+  private async writeConfig(folder: vscode.WorkspaceFolder, config: ExtensionConfigFile): Promise<void> {
+    validateConfigFile(config);
     const configUri = this.getConfigUri(folder);
     const parentUri = vscode.Uri.file(path.dirname(configUri.fsPath));
     await vscode.workspace.fs.createDirectory(parentUri);
     await vscode.workspace.fs.writeFile(
       configUri,
-      Buffer.from(`${JSON.stringify(normalized, null, 2)}\n`, 'utf8'),
+      Buffer.from(`${JSON.stringify(config, null, 2)}\n`, 'utf8'),
     );
   }
 
@@ -151,16 +181,16 @@ export class ConfigService {
     };
   }
 
-  public async setActiveProfile(folder: vscode.WorkspaceFolder, profileName: string): Promise<void> {
+  public async setActiveProfile(folder: vscode.WorkspaceFolder, profileName: string | undefined): Promise<void> {
     await this.context.workspaceState.update(this.activeProfileKey(folder), profileName);
   }
 
-  public getActiveProfileName(folder: vscode.WorkspaceFolder, config: ExtensionConfigFile): string {
+  public getActiveProfileName(folder: vscode.WorkspaceFolder, config: ExtensionConfigFile): string | undefined {
     const stored = this.context.workspaceState.get<string>(this.activeProfileKey(folder));
-    if (stored && config.profiles[stored]) {
+    if (stored && Object.hasOwn(config.profiles, stored)) {
       return stored;
     }
-    if (config.defaultProfile && config.profiles[config.defaultProfile]) {
+    if (config.defaultProfile && Object.hasOwn(config.profiles, config.defaultProfile)) {
       return config.defaultProfile;
     }
     return Object.keys(config.profiles)[0];
@@ -177,21 +207,20 @@ export class ConfigService {
     await vscode.window.showTextDocument(document);
   }
 
-  public async load(folder: vscode.WorkspaceFolder, profileName?: string): Promise<LoadedProfile> {
+  public async load(
+    folder: vscode.WorkspaceFolder,
+    profileName?: string,
+    options: { resolveLoginSecrets?: boolean } = {},
+  ): Promise<LoadedProfile> {
     const configUri = this.getConfigUri(folder);
     const config = await this.readConfig(folder);
 
-    const names = Object.keys(config.profiles);
-    if (names.length === 0) {
-      throw new Error('配置文件中至少需要一个上传环境。');
+    const selectedName = profileName ?? this.getActiveProfileName(folder, config);
+    if (selectedName === undefined) {
+      throw new NoUploadProfilesError();
     }
 
-    const selectedName = profileName
-      ?? this.context.workspaceState.get<string>(this.activeProfileKey(folder))
-      ?? config.defaultProfile
-      ?? names[0];
-    const source = config.profiles[selectedName];
-    if (!source) {
+    if (!Object.hasOwn(config.profiles, selectedName)) {
       throw new Error(`上传环境“${selectedName}”不存在，请重新选择环境。`);
     }
 
@@ -199,15 +228,18 @@ export class ConfigService {
       workspaceFolder: folder,
       configUri,
       config,
-      profile: this.resolveProfile(selectedName, source, config, folder),
+      profile: this.resolveProfile(selectedName, config.profiles[selectedName], config, folder, options.resolveLoginSecrets),
     };
   }
 
   public async selectProfile(folder: vscode.WorkspaceFolder): Promise<ResolvedProfile | undefined> {
-    const loaded = await this.load(folder);
-    const currentName = loaded.profile.name;
+    const config = await this.readConfig(folder);
+    const currentName = this.getActiveProfileName(folder, config);
+    if (!currentName) {
+      throw new NoUploadProfilesError();
+    }
     const selected = await vscode.window.showQuickPick(
-      Object.entries(loaded.config.profiles).map(([name, profile]) => ({
+      Object.entries(config.profiles).map(([name, profile]) => ({
         label: name,
         description: `${profile.protocol.toUpperCase()} · ${profile.host}:${profile.port ?? defaultPort(profile.protocol, profile)}`,
         picked: name === currentName,
@@ -218,8 +250,9 @@ export class ConfigService {
       return undefined;
     }
 
+    const { profile } = await this.load(folder, selected.label);
     await this.setActiveProfile(folder, selected.label);
-    return this.load(folder, selected.label).then((result) => result.profile);
+    return profile;
   }
 
   private resolveProfile(
@@ -227,6 +260,7 @@ export class ConfigService {
     source: UploadProfile,
     config: ExtensionConfigFile,
     folder: vscode.WorkspaceFolder,
+    resolveLoginSecrets = true,
   ): ResolvedProfile {
     const protocol = String(source.protocol).toLowerCase() as TransferProtocol;
     if (protocol !== 'sftp' && protocol !== 'ftp') {
@@ -242,19 +276,8 @@ export class ConfigService {
       throw new Error(`环境“${name}”缺少 remotePath。`);
     }
 
-    const interpolate = (value?: string): string | undefined => {
-      if (value === undefined) {
-        return undefined;
-      }
-      const withWorkspace = value.replaceAll('${workspaceFolderBasename}', folder.name);
-      return withWorkspace.replace(/\$\{env:([^}]+)\}/g, (_match, variable: string) => {
-        const resolved = process.env[variable];
-        if (resolved === undefined) {
-          throw new Error(`环境变量 ${variable} 未设置。`);
-        }
-        return resolved;
-      });
-    };
+    const interpolate = (value?: string): string | undefined =>
+      value === undefined ? undefined : resolveProfileValue(value, folder.name);
 
     const authType: AuthenticationType = protocol === 'ftp'
       ? 'password'
@@ -269,8 +292,8 @@ export class ConfigService {
       authType,
       host: interpolate(source.host)!,
       username: interpolate(source.username)!,
-      password: authType === 'password' ? interpolate(source.password) : undefined,
-      passphrase: authType === 'privateKey' ? interpolate(source.passphrase) : undefined,
+      password: resolveLoginSecrets && authType === 'password' ? interpolate(source.password) : undefined,
+      passphrase: resolveLoginSecrets && authType === 'privateKey' ? interpolate(source.passphrase) : undefined,
       privateKeyPath: privateKeyPath ? expandHome(privateKeyPath) : undefined,
       localPath,
       remotePath: normalizeRemoteRoot(interpolate(source.remotePath)!),
@@ -284,6 +307,35 @@ export class ConfigService {
   private activeProfileKey(folder: vscode.WorkspaceFolder): string {
     return `activeProfile:${folder.uri.toString()}`;
   }
+}
+
+export class NoUploadProfilesError extends Error {
+  public constructor() {
+    super('当前工作区暂无上传环境，请先在配置页面新增环境。');
+  }
+}
+
+export function resolveSshEndpoint(profile: UploadProfile, folderName: string): { host: string; port: number } {
+  const host = normalizeSshHost(resolveProfileValue(profile.host, folderName));
+  if (!host) {
+    throw new Error('请检查 SFTP 环境的服务器地址。');
+  }
+  return { host, port: profile.port ?? defaultPort('sftp') };
+}
+
+export function normalizeSshHost(host: string): string {
+  return host.trim().replace(/^\[([^\]]+)\]$/, '$1');
+}
+
+export function resolveProfileValue(value: string, folderName: string): string {
+  const withWorkspace = value.replaceAll('${workspaceFolderBasename}', folderName);
+  return withWorkspace.replace(/\$\{env:([^}]+)\}/g, (_match, variable: string) => {
+    const resolved = process.env[variable];
+    if (resolved === undefined) {
+      throw new Error(`环境变量 ${variable} 未设置。`);
+    }
+    return resolved;
+  });
 }
 
 export function normalizeRemoteRoot(remotePath: string): string {
@@ -321,7 +373,7 @@ export function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function defaultPort(protocol: TransferProtocol, profile?: UploadProfile): number {
+export function defaultPort(protocol: TransferProtocol, profile?: UploadProfile): number {
   if (protocol === 'sftp') {
     return 22;
   }
@@ -347,16 +399,12 @@ function validateConfigFile(value: unknown): asserts value is ExtensionConfigFil
     throw new Error('配置文件必须包含 profiles 对象。');
   }
 
-  const entries = Object.entries(config.profiles);
-  if (entries.length === 0) {
-    throw new Error('配置文件中至少需要一个上传环境。');
-  }
-  if (config.defaultProfile && !config.profiles[config.defaultProfile]) {
+  if (config.defaultProfile && !Object.hasOwn(config.profiles, config.defaultProfile)) {
     throw new Error(`默认环境“${config.defaultProfile}”不存在。`);
   }
   validateIgnore(config.ignore, '全局 ignore');
 
-  for (const [name, profile] of entries) {
+  for (const [name, profile] of Object.entries(config.profiles)) {
     if (!name.trim()) {
       throw new Error('上传环境名称不能为空。');
     }

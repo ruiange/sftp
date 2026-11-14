@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}} 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
+  <link rel="stylesheet" href="{{xtermCssUri}}">
+  <link rel="stylesheet" href="{{styleUri}}">
+  <title>SSH 终端</title>
+</head>
+<body>
+  <main class="session" aria-label="SSH 终端">
+    <header class="session-header">
+      <span class="shell-icon" aria-hidden="true">&gt;_</span>
+      <h1 id="session-title">SSH</h1>
+      <span id="session-endpoint" class="endpoint"></span>
+      <button id="copy" class="quiet copy" type="button" disabled>复制</button>
+    </header>
+
+    <div id="terminal" class="terminal-host" aria-label="交互式 SSH 终端"></div>
+
+    <section id="quick-command" class="quick-command" aria-label="快捷命令输入区" hidden>
+      <div class="toolbar">
+        <button id="library-toggle" class="quiet" type="button" aria-controls="library" aria-expanded="false">命令库 <span class="chevron" aria-hidden="true"></span></button>
+        <button id="clear" class="quiet" type="button" disabled>清空</button>
+        <span class="destination">发送到<span>当前会话</span></span>
+        <button id="hide" class="quiet collapse" type="button" aria-label="收起快捷命令" title="收起快捷命令"><span class="chevron" aria-hidden="true"></span></button>
+      </div>
+
+      <div class="composer">
+        <label class="screen-reader" for="command">命令</label>
+        <textarea id="command" maxlength="16384" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="execute-hint" placeholder="输入命令，Enter 换行"></textarea>
+        <section id="library" class="library" aria-label="命令库" hidden>
+          <div class="library-actions">
+            <button id="save-toggle" class="quiet" type="button" aria-controls="save-form" aria-expanded="false" disabled>保存当前命令</button>
+            <button id="remove" class="quiet danger" type="button" hidden>删除当前命令</button>
+          </div>
+          <form id="save-form" class="save-form" hidden>
+            <label class="screen-reader" for="name">命令名称</label>
+            <input id="name" type="text" maxlength="80" placeholder="命令名称" autocomplete="off" spellcheck="false">
+            <button id="save" class="primary" type="submit" disabled>保存</button>
+            <button id="cancel-save" class="quiet" type="button">取消</button>
+          </form>
+          <div id="commands" class="command-list"></div>
+        </section>
+      </div>
+
+      <div class="command-footer">
+        <p id="execute-hint" class="screen-reader">请在终端回到 Shell 提示符后执行。</p>
+        <p id="feedback" class="feedback" role="status"></p>
+        <button id="execute" class="primary" type="button" title="请在终端回到 Shell 提示符后执行" disabled>执行 <kbd id="execute-shortcut">Ctrl+Enter</kbd></button>
+      </div>
+    </section>
+
+    <footer class="session-footer">
+      <button id="quick-command-toggle" class="quiet quick-toggle" type="button" aria-controls="quick-command" aria-expanded="false">
+        <span aria-hidden="true" class="command-icon">&gt;_</span> 快捷命令 <span class="chevron" aria-hidden="true"></span>
+      </button>
+      <span id="session-detail" class="connection" data-state="connecting" role="status">正在连接</span>
+    </footer>
+    <span id="terminal-feedback" class="screen-reader" role="status"></span>
+  </main>
+  <script nonce="{{nonce}}" src="{{xtermScriptUri}}" defer></script>
+  <script nonce="{{nonce}}" src="{{fitScriptUri}}" defer></script>
+  <script nonce="{{nonce}}" src="{{scriptUri}}" defer></script>
+</body>
+</html>

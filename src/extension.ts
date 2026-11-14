@@ -1,10 +1,14 @@
 import * as vscode from 'vscode';
-import { ConfigService, isPathInsideRoot, resolveLocalUploadRoot, toErrorMessage } from './config';
+import { ConfigService, isPathInsideRoot, NoUploadProfilesError, resolveLocalUploadRoot, toErrorMessage } from './config';
 import { ConfigPanel } from './configPanel';
 import { Logger } from './logger';
-import { RemoteFileViewProvider } from './remoteFileView';
+import { RemoteFileSystem } from './remoteFileSystem';
+import { RemoteFileActions } from './remoteFileActions';
+import { RemoteFilesPanel } from './serverFilesPanel';
+import { SshQuickCommands } from './sshQuickCommands';
+import { SshServerViewProvider } from './sshServerView';
 import type { LoadedProfile, UploadResult } from './types';
-import { TransferViewProvider } from './transferView';
+import { TransferViewProvider, type UploadFeedback } from './transferView';
 import { Uploader } from './uploader';
 
 class ExtensionController implements vscode.Disposable {
@@ -13,18 +17,25 @@ class ExtensionController implements vscode.Disposable {
   private readonly uploader: Uploader;
   private readonly configPanel: ConfigPanel;
   private readonly transferView: TransferViewProvider;
-  private readonly remoteFileView: RemoteFileViewProvider;
+  private readonly remoteFilesPanel: RemoteFilesPanel;
+  private readonly sshServerView: SshServerViewProvider;
+  private readonly sshQuickCommands: SshQuickCommands;
   private readonly statusBar: vscode.StatusBarItem;
   private readonly disposables: vscode.Disposable[] = [];
   private uploadQueue: Promise<void> = Promise.resolve();
   private activeOperations = 0;
+  private pendingManualUploads = 0;
 
   public constructor(private readonly context: vscode.ExtensionContext) {
-    this.configService = new ConfigService(context);
+    const resolveWorkspaceUri = (uri: vscode.Uri): vscode.Uri => remoteFileSystem.getWorkspaceUri(uri) ?? uri;
+    this.configService = new ConfigService(context, resolveWorkspaceUri);
     this.logger = new Logger();
+    const remoteFileSystem = new RemoteFileSystem(this.configService, this.logger);
     this.uploader = new Uploader(this.logger);
-    this.transferView = new TransferViewProvider(this.configService);
-    this.remoteFileView = new RemoteFileViewProvider(this.configService, this.logger);
+    this.transferView = new TransferViewProvider(context.extensionUri, this.configService, (resource, profile) =>
+      this.runCommand(() => this.enqueueUpload([resource], true, profile)));
+    const remoteFileActions = new RemoteFileActions(this.logger, remoteFileSystem);
+    this.remoteFilesPanel = new RemoteFilesPanel(context, this.configService, remoteFileSystem, remoteFileActions);
     this.configPanel = new ConfigPanel(
       context.extensionUri,
       this.configService,
@@ -32,10 +43,12 @@ class ExtensionController implements vscode.Disposable {
       this.logger,
       async (folder) => {
         await this.refreshStatusBar(folder);
-        this.transferView.refresh();
-        this.remoteFileView.refresh();
+        this.refreshViews();
       },
     );
+    this.sshServerView = new SshServerViewProvider(context.extensionUri, this.configService, (folder, name) =>
+      this.runCommand(() => this.configPanel.deleteSavedProfile(folder, name)));
+    this.sshQuickCommands = new SshQuickCommands(context);
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 30);
     this.statusBar.command = 'sftpFtpUploader.selectProfile';
 
@@ -44,33 +57,36 @@ class ExtensionController implements vscode.Disposable {
       this.logger,
       this.configPanel,
       this.transferView,
-      this.remoteFileView,
+      this.remoteFilesPanel,
+      this.sshServerView,
+      this.sshQuickCommands,
+      remoteFileSystem,
       this.statusBar,
-      vscode.window.registerTreeDataProvider('sftpFtpUploader.controlView', this.transferView),
-      vscode.window.registerTreeDataProvider('sftpFtpUploader.remoteFilesView', this.remoteFileView),
+      vscode.window.registerWebviewViewProvider('sftpFtpUploader.controlView', this.transferView),
+      vscode.window.registerTreeDataProvider('sftpFtpUploader.remoteFilesView', {
+        getChildren: () => [],
+        getTreeItem: (item: vscode.TreeItem) => item,
+      }),
+      vscode.window.registerWebviewViewProvider('sftpFtpUploader.sshTerminalView', this.sshServerView),
       vscode.workspace.onDidSaveTextDocument((document) => void this.handleSave(document)),
       vscode.window.onDidChangeActiveTextEditor(() => {
         void this.refreshStatusBar();
-        this.transferView.refresh();
-        this.remoteFileView.refresh();
+        this.refreshViews(false);
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         void this.refreshStatusBar();
-        this.transferView.refresh();
-        this.remoteFileView.refresh();
+        this.refreshViews();
       }),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration('sftpFtpUploader')) {
           void this.refreshStatusBar();
-          this.transferView.refresh();
-          this.remoteFileView.refresh();
+          this.refreshViews();
         }
       }),
       vscode.workspace.onDidSaveTextDocument((document) => {
-        if (document.uri.fsPath.endsWith(this.configService.configFileName)) {
+        if (document.uri.scheme === 'file' && document.uri.fsPath.endsWith(this.configService.configFileName)) {
           void this.refreshStatusBar();
-          this.transferView.refresh();
-          this.remoteFileView.refresh();
+          this.refreshViews();
         }
       }),
     );
@@ -81,6 +97,14 @@ class ExtensionController implements vscode.Disposable {
   public dispose(): void {
     for (const disposable of this.disposables) {
       disposable.dispose();
+    }
+  }
+
+  private refreshViews(refreshConnections = true): void {
+    this.transferView.refresh();
+    if (refreshConnections) {
+      this.remoteFilesPanel.refresh();
+      this.sshServerView.refresh();
     }
   }
 
@@ -97,18 +121,24 @@ class ExtensionController implements vscode.Disposable {
       this.runCommand(() => this.uploadWorkspace(asUri(resource))));
     register('sftpFtpUploader.initialize', () =>
       this.runCommand(() => this.initialize()));
-    register('sftpFtpUploader.openConfig', () =>
-      this.runCommand(() => this.openConfig()));
+    register('sftpFtpUploader.openConfig', (resource) =>
+      this.runCommand(() => this.openConfig(asUri(resource))));
     register('sftpFtpUploader.editConfigJson', () =>
       this.runCommand(() => this.editConfigJson()));
-    register('sftpFtpUploader.selectProfile', () =>
-      this.runCommand(() => this.selectProfile()));
+    register('sftpFtpUploader.selectProfile', (resource) =>
+      this.runCommand(() => this.selectProfile(asUri(resource))));
     register('sftpFtpUploader.testConnection', () =>
       this.runCommand(() => this.testConnection()));
+    register('sftpFtpUploader.openSshTerminal', (resource, profileName) =>
+      this.runCommand(() => this.openSshTerminal(asUri(resource), typeof profileName === 'string' ? profileName : undefined)));
+    register('sftpFtpUploader.openSshQuickCommands', () =>
+      this.sshQuickCommands.show());
+    register('sftpFtpUploader.refreshSshLatency', () => this.sshServerView.refresh());
     register('sftpFtpUploader.showOutput', () => this.logger.show());
-    register('sftpFtpUploader.refreshRemoteFiles', () => this.remoteFileView.refresh());
-    register('sftpFtpUploader.deleteRemoteItem', (item) =>
-      this.runCommand(() => this.remoteFileView.deleteRemoteItem(item)));
+    register('sftpFtpUploader.openServerFiles', () =>
+      this.runCommand(() => this.remoteFilesPanel.show()));
+    register('sftpFtpUploader.refreshRemoteFiles', () =>
+      this.runCommand(() => this.remoteFilesPanel.refreshDirectory()));
   }
 
   private async uploadResourcesFromExplorer(resource: unknown, selectedResources: unknown): Promise<void> {
@@ -119,7 +149,7 @@ class ExtensionController implements vscode.Disposable {
       await this.uploadCurrentFile();
       return;
     }
-    await this.enqueueUpload(() => this.uploadResources(resources, true));
+    await this.enqueueUpload(resources, true);
   }
 
   private async uploadCurrentFile(): Promise<void> {
@@ -127,7 +157,7 @@ class ExtensionController implements vscode.Disposable {
     if (!uri || uri.scheme !== 'file') {
       throw new Error('当前没有可上传的本地文件。');
     }
-    await this.enqueueUpload(() => this.uploadResources([uri], true));
+    await this.enqueueUpload([uri], true);
   }
 
   private async uploadWorkspace(resource?: vscode.Uri): Promise<void> {
@@ -137,10 +167,10 @@ class ExtensionController implements vscode.Disposable {
     }
     const loaded = await this.configService.load(folder);
     const uploadRoot = resolveLocalUploadRoot(folder.uri.fsPath, loaded.profile.localPath);
-    await this.enqueueUpload(() => this.uploadResources([vscode.Uri.file(uploadRoot)], true));
+    await this.enqueueUpload([vscode.Uri.file(uploadRoot)], true);
   }
 
-  private async uploadResources(resources: vscode.Uri[], manual: boolean): Promise<void> {
+  private async uploadResources(resources: vscode.Uri[], manual: boolean, profileName?: string): Promise<UploadFeedback> {
     const grouped = new Map<string, { folder: vscode.WorkspaceFolder; resources: vscode.Uri[] }>();
     for (const resource of resources) {
       const folder = vscode.workspace.getWorkspaceFolder(resource);
@@ -156,19 +186,19 @@ class ExtensionController implements vscode.Disposable {
     const operation = async (
       progress: vscode.Progress<{ message?: string; increment?: number }>,
       token: vscode.CancellationToken,
-    ): Promise<UploadResult> => {
+    ): Promise<UploadResult & { cancelled: boolean }> => {
       const total: UploadResult = { uploaded: 0, skipped: 0, bytes: 0 };
       for (const group of grouped.values()) {
         if (token.isCancellationRequested) {
           break;
         }
-        const loaded = await this.configService.load(group.folder);
+        const loaded = await this.configService.load(group.folder, profileName);
         const result = await this.uploader.upload(loaded, group.resources, progress, token);
         total.uploaded += result.uploaded;
         total.skipped += result.skipped;
         total.bytes += result.bytes;
       }
-      return total;
+      return { ...total, cancelled: token.isCancellationRequested };
     };
 
     const result = await vscode.window.withProgress(
@@ -180,14 +210,17 @@ class ExtensionController implements vscode.Disposable {
       operation,
     );
 
-    if (manual) {
-      const message = result.uploaded === 0
-        ? `没有需要上传的文件${result.skipped > 0 ? `，已跳过 ${result.skipped} 项` : ''}。`
-        : `上传完成：${result.uploaded} 个文件，共 ${formatBytes(result.bytes)}${result.skipped > 0 ? `，跳过 ${result.skipped} 项` : ''}。`;
-      if (result.uploaded === 0 || this.showSuccessNotification) {
-        void vscode.window.showInformationMessage(message);
-      }
+    if (result.cancelled) {
+      const message = result.uploaded ? `已取消上传，已传输 ${result.uploaded} 个文件。` : '已取消上传。';
+      return { state: 'cancelled', message };
     }
+    const message = result.uploaded === 0
+      ? `没有需要上传的文件${result.skipped > 0 ? `，已跳过 ${result.skipped} 项` : ''}。`
+      : `已上传 ${result.uploaded} 个文件，共 ${formatBytes(result.bytes)}${result.skipped > 0 ? `，跳过 ${result.skipped} 项` : ''}。`;
+    if (manual && (result.uploaded === 0 || this.showSuccessNotification)) {
+      void vscode.window.showInformationMessage(message);
+    }
+    return { state: 'done', message };
   }
 
   private async handleSave(document: vscode.TextDocument): Promise<void> {
@@ -208,8 +241,11 @@ class ExtensionController implements vscode.Disposable {
       if (!isPathInsideRoot(uploadRoot, document.uri.fsPath)) {
         return;
       }
-      await this.enqueueUpload(() => this.uploadResources([document.uri], false));
+      await this.enqueueUpload([document.uri], false);
     } catch (error) {
+      if (error instanceof NoUploadProfilesError) {
+        return;
+      }
       const message = toErrorMessage(error);
       this.logger.error(`保存时自动上传失败：${message}`);
       vscode.window.setStatusBarMessage(`$(error) 自动上传失败：${message}`, 5_000);
@@ -224,12 +260,11 @@ class ExtensionController implements vscode.Disposable {
     await this.configService.initialize(folder);
     await this.configPanel.show(folder);
     await this.refreshStatusBar(folder);
-    this.transferView.refresh();
-    this.remoteFileView.refresh();
+    this.refreshViews();
   }
 
-  private async openConfig(): Promise<void> {
-    const folder = await this.configService.chooseWorkspaceFolder(vscode.window.activeTextEditor?.document.uri);
+  private async openConfig(resource?: vscode.Uri): Promise<void> {
+    const folder = await this.configService.chooseWorkspaceFolder(resource ?? vscode.window.activeTextEditor?.document.uri);
     if (!folder) {
       return;
     }
@@ -244,8 +279,8 @@ class ExtensionController implements vscode.Disposable {
     await this.configService.openConfig(folder);
   }
 
-  private async selectProfile(): Promise<void> {
-    const folder = await this.configService.chooseWorkspaceFolder(vscode.window.activeTextEditor?.document.uri);
+  private async selectProfile(resource?: vscode.Uri): Promise<void> {
+    const folder = await this.configService.chooseWorkspaceFolder(resource ?? vscode.window.activeTextEditor?.document.uri);
     if (!folder) {
       return;
     }
@@ -253,8 +288,7 @@ class ExtensionController implements vscode.Disposable {
     if (profile) {
       void vscode.window.showInformationMessage(`已切换到上传环境：${profile.name}`);
       await this.refreshStatusBar(folder);
-      this.transferView.refresh();
-      this.remoteFileView.refresh();
+      this.refreshViews();
     }
   }
 
@@ -277,17 +311,25 @@ class ExtensionController implements vscode.Disposable {
     );
   }
 
+  private async openSshTerminal(workspaceUri?: vscode.Uri, profileName?: string): Promise<void> {
+    const folder = workspaceUri
+      ? vscode.workspace.workspaceFolders?.find((candidate) => candidate.uri.toString() === workspaceUri.toString())
+      : this.configService.getActiveWorkspaceFolder();
+    if (!folder) {
+      throw new Error(workspaceUri ? '该服务器所属的工作区已关闭。' : '请先打开一个工作区。');
+    }
+    const { profile } = await this.configService.load(folder, profileName);
+    const colorizeLogs = vscode.workspace.getConfiguration('sftpFtpUploader', folder.uri).get('colorizeSshLogs', true);
+    await this.sshQuickCommands.openTerminal(profile, colorizeLogs);
+  }
+
   private async refreshStatusBar(preferredFolder?: vscode.WorkspaceFolder): Promise<void> {
     if (!vscode.workspace.getConfiguration('sftpFtpUploader').get<boolean>('showStatusBar', true)) {
       this.statusBar.hide();
       return;
     }
 
-    const folder = preferredFolder
-      ?? (vscode.window.activeTextEditor
-        ? vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri)
-        : undefined)
-      ?? vscode.workspace.workspaceFolders?.[0];
+    const folder = preferredFolder ?? this.configService.getActiveWorkspaceFolder();
     if (!folder) {
       this.statusBar.hide();
       return;
@@ -316,13 +358,35 @@ class ExtensionController implements vscode.Disposable {
     this.statusBar.command = 'sftpFtpUploader.selectProfile';
   }
 
-  private async enqueueUpload<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.uploadQueue.then(operation, operation);
+  private async enqueueUpload(resources: vscode.Uri[], manual: boolean, profileName?: string): Promise<void> {
+    if (manual) {
+      this.pendingManualUploads += 1;
+      if (this.pendingManualUploads === 1) {
+        this.transferView.setUpload({ state: 'queued', message: '等待上传…' });
+      }
+    }
+    const run = this.uploadQueue.then(async () => {
+      if (manual) this.transferView.setUpload({ state: 'running', message: '正在上传…' });
+      let feedback: UploadFeedback | undefined;
+      try {
+        feedback = await this.uploadResources(resources, manual, profileName);
+      } catch (error) {
+        feedback = { state: 'error', message: `上传失败：${toErrorMessage(error)}` };
+        throw error;
+      } finally {
+        if (manual) {
+          this.pendingManualUploads -= 1;
+          this.transferView.setUpload(this.pendingManualUploads
+            ? { state: 'queued', message: '等待上传…' }
+            : feedback);
+        }
+      }
+    });
     this.uploadQueue = run.then(() => undefined, () => undefined);
     this.activeOperations += 1;
     await this.refreshStatusBar();
     try {
-      return await run;
+      await run;
     } finally {
       this.activeOperations -= 1;
       await this.refreshStatusBar();
